@@ -3,7 +3,7 @@
 ![CI](https://github.com/TushGoel/kafka-patterns/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Go](https://img.shields.io/badge/go-1.21%2B-blue)
-![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Production Kafka patterns in **Python and Go** — from reliable producer to LLM inference telemetry streaming and real-time anomaly detection.

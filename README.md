@@ -165,17 +165,26 @@ count = processor.process_batch(messages)
 kafka-patterns/
 ├── python/
 │   ├── patterns/
-│   │   ├── producer.py       # Reliable producer, idempotent delivery
-│   │   ├── consumer.py       # Consumer group, manual commit, DLQ routing
-│   │   └── exactly_once.py   # Transactional exactly-once processing
+│   │   ├── producer.py          # Reliable producer, idempotent delivery
+│   │   ├── consumer.py          # Consumer group, manual commit, DLQ routing
+│   │   ├── exactly_once.py      # Transactional exactly-once processing
+│   │   ├── consumer_lag.py      # Partition lag monitoring, trend detection
+│   │   ├── schema_registry.py   # Schema registration, wire format, compatibility
+│   │   ├── llm_event_stream.py  # LLM invocation telemetry streaming
+│   │   └── inference_monitor.py # Real-time anomaly detection, SLO enforcement
 │   └── tests/
-│       ├── test_producer.py  # 7 tests: delivery, batching, callbacks, stats
-│       └── test_consumer.py  # 7 tests: retry, DLQ, offset, deserialization
+│       ├── test_producer.py     # 7 tests
+│       ├── test_consumer.py     # 7 tests
+│       ├── test_consumer_lag.py # 12 tests
+│       ├── test_schema_registry.py # 9 tests
+│       └── test_llm_inference.py   # 11 tests
 ├── go/
 │   ├── producer/
-│   │   └── producer.go       # Go producer with delivery confirmation
+│   │   ├── producer.go
+│   │   └── producer_test.go     # 6 tests
 │   └── consumer/
-│       └── consumer.go       # Go consumer group with manual commit
+│       ├── consumer.go
+│       └── consumer_test.go     # 5 tests
 └── go.mod
 ```
 

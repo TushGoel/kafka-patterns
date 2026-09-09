@@ -6,6 +6,7 @@ Key production concerns:
   - Retry with backoff on transient failures
   - Delivery callback for guaranteed confirmation
   - Schema-validated messages
+  - Distributed tracing (OpenTelemetry span per produce call)
 """
 from __future__ import annotations
 
@@ -13,6 +14,14 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+# Module-level tracer — a lightweight ProxyTracer until a real TracerProvider
+# is configured (via trace.set_tracer_provider). Safe to call before setup;
+# spans are simply no-ops until a provider + exporter is wired in.
+tracer = trace.get_tracer(__name__)
 
 
 @dataclass
@@ -73,30 +82,47 @@ class ReliableProducer:
         # In production: self._producer = confluent_kafka.Producer({...})
 
     def send(self, message: Message) -> DeliveryReport:
-        """Send one message. Blocks until delivery confirmed."""
-        start = time.monotonic()
+        """Send one message. Blocks until delivery confirmed.
 
-        # Production:
-        # self._producer.produce(
-        #     topic=self.config.topic,
-        #     key=message.key_bytes(),
-        #     value=message.serialize(),
-        #     headers=message.headers,
-        #     on_delivery=self._on_delivery,
-        # )
-        # self._producer.flush()  # block until ack
+        Opens a span covering the produce call. Attributes carry topic,
+        partition, offset, and the message key — never the message value,
+        since payloads may contain PII or other sensitive content that
+        shouldn't be persisted in tracing backends.
+        """
+        with tracer.start_as_current_span("kafka.produce") as span:
+            span.set_attribute("messaging.system", "kafka")
+            span.set_attribute("messaging.destination.name", self.config.topic)
+            span.set_attribute("messaging.kafka.message_key", message.key)
 
-        # Simulated delivery report (replace with real confluent_kafka.Message)
-        report = DeliveryReport(
-            topic=self.config.topic,
-            partition=0,
-            offset=len(self._sent),
-            latency_ms=(time.monotonic() - start) * 1000,
-        )
-        self._sent.append(report)
-        if self._delivery_callback:
-            self._delivery_callback(report)
-        return report
+            start = time.monotonic()
+
+            # Production:
+            # self._producer.produce(
+            #     topic=self.config.topic,
+            #     key=message.key_bytes(),
+            #     value=message.serialize(),
+            #     headers=message.headers,
+            #     on_delivery=self._on_delivery,
+            # )
+            # self._producer.flush()  # block until ack
+
+            # Simulated delivery report (replace with real confluent_kafka.Message)
+            report = DeliveryReport(
+                topic=self.config.topic,
+                partition=0,
+                offset=len(self._sent),
+                latency_ms=(time.monotonic() - start) * 1000,
+            )
+
+            span.set_attribute("messaging.kafka.partition", report.partition)
+            span.set_attribute("messaging.kafka.offset", report.offset)
+            if not report.succeeded:
+                span.set_status(Status(StatusCode.ERROR, report.error))
+
+            self._sent.append(report)
+            if self._delivery_callback:
+                self._delivery_callback(report)
+            return report
 
     def send_batch(self, messages: list[Message]) -> list[DeliveryReport]:
         """Send a batch. All messages produced before flush — more efficient."""

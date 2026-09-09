@@ -159,6 +159,36 @@ count = processor.process_batch(messages)
 
 ---
 
+### 5. Distributed Tracing (OpenTelemetry)
+
+| | |
+|---|---|
+| **Problem** | A message that fails somewhere between produce and consume is hard to debug — logs are scattered across services with no shared identifier, and there's no way to see partition/offset/retry history for one specific message without grepping multiple hosts. |
+| **Solution** | Wrap every produce and consume-with-retry call in an OpenTelemetry span carrying `messaging.system`, `messaging.destination.name` (topic), `messaging.kafka.partition`, `messaging.kafka.offset`, and `messaging.kafka.message_key`. The message **value** is never added as a span attribute — payloads may carry PII, and tracing backends are not an appropriate place to persist them. Failed consumes (including DLQ routing) set an `ERROR` span status so trace-based alerting can pick them up. |
+| **Impact** | One trace ID follows a message from produce through every retry to final commit or DLQ routing — no more correlating logs by timestamp across services. Span data feeds directly into existing tracing backends (Jaeger, Tempo, X-Ray, etc.) with zero payload exposure. |
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+# Wire a real collector once, at process start
+provider = TracerProvider()
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint="localhost:4317")))
+trace.set_tracer_provider(provider)
+
+# producer.py / consumer.py already open spans internally — nothing else to do
+producer.send(Message(key="order-123", value={"amount": 99.99}))
+# → span "kafka.produce": topic=order-events partition=0 offset=42 message_key=order-123
+```
+
+**Why never trace the value:** Span attributes and events are exported to a tracing backend and often retained longer than the message itself. Tracing `message.key` and offsets is enough to locate and replay a specific message from the topic if deeper inspection is needed — there's no reason to duplicate PII-bearing payload content into a system with different (usually weaker) access controls than Kafka itself.
+
+Tests use OpenTelemetry's `InMemorySpanExporter` (see `python/tests/test_tracing.py`) — the standard way to assert on span attributes and status in unit tests without a real collector.
+
+---
+
 ## Project Structure
 
 ```
@@ -177,7 +207,8 @@ kafka-patterns/
 │       ├── test_consumer.py     # 7 tests
 │       ├── test_consumer_lag.py # 12 tests
 │       ├── test_schema_registry.py # 9 tests
-│       └── test_llm_inference.py   # 11 tests
+│       ├── test_llm_inference.py   # 11 tests
+│       └── test_tracing.py         # 7 tests — OpenTelemetry span assertions
 ├── go/
 │   ├── producer/
 │   │   ├── producer.go

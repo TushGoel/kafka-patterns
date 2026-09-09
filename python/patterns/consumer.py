@@ -7,6 +7,7 @@ Key production concerns:
   - Graceful shutdown without losing unprocessed messages
   - Consumer group rebalancing
   - Dead letter queue routing for failed messages
+  - Distributed tracing (OpenTelemetry span per consume + retry attempt)
 """
 from __future__ import annotations
 
@@ -14,6 +15,14 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional
+
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+# Module-level tracer — a lightweight ProxyTracer until a real TracerProvider
+# is configured (via trace.set_tracer_provider). Safe to call before setup;
+# spans are simply no-ops until a provider + exporter is wired in.
+tracer = trace.get_tracer(__name__)
 
 
 class CommitMode(str, Enum):
@@ -91,24 +100,47 @@ class ConsumerGroup:
         self._running = False
 
     def _process_with_retry(self, msg: ConsumedMessage) -> ProcessResult:
-        """Process with exponential backoff retry. Route to DLQ after exhaustion."""
-        import time
-        last_error = None
-        for attempt in range(1, self._max_retries + 1):
-            try:
-                success = self._processor(msg)
-                if success:
-                    return ProcessResult(message=msg, success=True)
-            except Exception as e:
-                last_error = str(e)
-                if attempt < self._max_retries:
-                    time.sleep(0.1 * (2 ** attempt))  # exponential backoff
+        """Process with exponential backoff retry. Route to DLQ after exhaustion.
 
-        # Route to DLQ — don't block the partition
-        return ProcessResult(
-            message=msg, success=False,
-            error=last_error, routed_to_dlq=bool(self._dlq_topic),
-        )
+        Opens one span for the whole consume-with-retry call. Attributes
+        carry topic, partition, offset, and the message key — never the
+        message value, since payloads may contain PII or other sensitive
+        content that shouldn't be persisted in tracing backends.
+        """
+        import time
+
+        with tracer.start_as_current_span("kafka.consume") as span:
+            span.set_attribute("messaging.system", "kafka")
+            span.set_attribute("messaging.destination.name", msg.topic)
+            span.set_attribute("messaging.kafka.partition", msg.partition)
+            span.set_attribute("messaging.kafka.offset", msg.offset)
+            if msg.key is not None:
+                span.set_attribute("messaging.kafka.message_key", msg.key)
+
+            last_error = None
+            attempts = 0
+            for attempt in range(1, self._max_retries + 1):
+                attempts = attempt
+                try:
+                    success = self._processor(msg)
+                    if success:
+                        span.set_attribute("messaging.kafka.retry_count", attempt - 1)
+                        return ProcessResult(message=msg, success=True)
+                except Exception as e:
+                    last_error = str(e)
+                    if attempt < self._max_retries:
+                        time.sleep(0.1 * (2 ** attempt))  # exponential backoff
+
+            # Route to DLQ — don't block the partition
+            span.set_attribute("messaging.kafka.retry_count", attempts)
+            span.set_attribute("messaging.kafka.routed_to_dlq", bool(self._dlq_topic))
+            if last_error:
+                span.set_status(Status(StatusCode.ERROR, last_error))
+
+            return ProcessResult(
+                message=msg, success=False,
+                error=last_error, routed_to_dlq=bool(self._dlq_topic),
+            )
 
     def run(self, max_messages: int = -1) -> list[ProcessResult]:
         """

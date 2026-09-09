@@ -3,7 +3,7 @@
 ![CI](https://github.com/TushGoel/kafka-patterns/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Go](https://img.shields.io/badge/go-1.21%2B-blue)
-![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-68%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Production Kafka patterns in **Python and Go** — from reliable producer to LLM inference telemetry streaming and real-time anomaly detection.
@@ -210,6 +210,43 @@ Validate manifests with `python3 -c "import yaml; yaml.safe_load(open(f))"` per 
 
 ---
 
+### 7. Cost-Aware Provider Routing
+
+| | |
+|---|---|
+| **Problem** | `inference_monitor.py` can *detect* that a provider is degraded (`slowest_provider()`), but detection alone doesn't stop the bleeding — someone still has to notice the alert and flip a config. And a naive "reroute on the first bad sample" auto-remediation flaps constantly, since individual LLM calls are noisy (one slow request doesn't mean the provider is actually down). |
+| **Solution** | `CostRouter` consumes the same per-invocation telemetry (cost, latency, tokens) and tracks rolling p95 latency and cost-per-1k-tokens against configured SLOs. A route change — primary to fallback, or back — requires several **consecutive** breaching (or recovering) samples, not one, plus a minimum cooldown between switches. This is the same idempotent-decision philosophy as the rest of the repo: don't act on unconfirmed signals. |
+| **Impact** | Sustained degradation is routed around automatically within a few samples; a single slow outlier request is not enough to move traffic. Every switch is recorded with a human-readable reason (`history()` / `summary()`), so the routing decision is auditable after the fact instead of being an opaque runtime side effect. |
+
+```python
+from python.patterns.cost_router import CostRouter, RoutingSLO
+
+router = CostRouter(
+    primary="bedrock", fallback="openai",
+    slo=RoutingSLO(
+        p95_latency_ms=2000,          # generic illustrative SLO, not tied to any real deployment
+        cost_per_1k_tokens_usd=5.0,
+        breach_streak_to_reroute=3,   # 3 consecutive breaches before switching away
+        recovery_streak_to_restore=5, # 5 consecutive healthy samples before switching back
+        cooldown_seconds=30,          # minimum time between switches, regardless of streaks
+    ),
+)
+
+for event in consume_llm_invocations():
+    active_provider = router.process(event)
+    # Send the *next* request to `active_provider`. Route a small slice of
+    # canary traffic to the non-active provider and feed those events back
+    # in too, so recovery can be detected without fully committing first.
+
+print(router.summary())
+# {'active_provider': 'openai', 'primary': 'bedrock', 'fallback': 'openai',
+#  'switch_count': 1, 'last_switch_reason': 'bedrock breached SLO 3 times in a row'}
+```
+
+**Why hysteresis, not a single threshold check:** A route flip has its own cost — cold caches, a different tokenizer, an unfamiliar latency profile while the new provider warms up. Requiring a streak of breaches before switching away, a longer streak of healthy samples before switching back, and a cooldown between switches trades a few extra degraded requests for not thrashing between providers on every noisy sample.
+
+---
+
 ## Project Structure
 
 ```
@@ -222,14 +259,16 @@ kafka-patterns/
 │   │   ├── consumer_lag.py      # Partition lag monitoring, trend detection
 │   │   ├── schema_registry.py   # Schema registration, wire format, compatibility
 │   │   ├── llm_event_stream.py  # LLM invocation telemetry streaming
-│   │   └── inference_monitor.py # Real-time anomaly detection, SLO enforcement
+│   │   ├── inference_monitor.py # Real-time anomaly detection, SLO enforcement
+│   │   └── cost_router.py       # Cost/latency SLO-based provider routing with hysteresis
 │   └── tests/
 │       ├── test_producer.py     # 7 tests
 │       ├── test_consumer.py     # 7 tests
 │       ├── test_consumer_lag.py # 12 tests
 │       ├── test_schema_registry.py # 9 tests
 │       ├── test_llm_inference.py   # 11 tests
-│       └── test_tracing.py         # 7 tests — OpenTelemetry span assertions
+│       ├── test_tracing.py         # 7 tests — OpenTelemetry span assertions
+│       └── test_cost_router.py     # 8 tests — SLO breach/recovery/hysteresis
 ├── go/
 │   ├── producer/
 │   │   ├── producer.go

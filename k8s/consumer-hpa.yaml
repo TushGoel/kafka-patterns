@@ -1,0 +1,67 @@
+# HorizontalPodAutoscaler for kafka-consumer, scaled on Kafka consumer lag
+# rather than CPU/memory — the same signal python/patterns/consumer_lag.py
+# uses to classify partition health (CAUGHT_UP / NOMINAL / WARNING /
+# CRITICAL, thresholds at lag < 1_000 and lag < 10_000).
+#
+# --- Metrics-adapter wiring (out of scope for this demo repo) -------------
+# `external.metrics.k8s.io` is not populated by Kubernetes itself. To make
+# the metric below resolvable, a real cluster needs:
+#   1. A lag exporter (e.g. kafka-lag-exporter, or Burrow + burrow_exporter)
+#      scraping the consumer group's committed offsets vs. broker high
+#      watermark and exposing `kafka_consumergroup_group_lag` per group/topic
+#      as a Prometheus metric.
+#   2. Prometheus scraping that exporter.
+#   3. prometheus-adapter (or KEDA's Prometheus scaler, an alternative to
+#      this whole file) configured with a rule mapping the Prometheus
+#      series above to the Kubernetes External Metrics API, seriesQuery
+#      keyed on the consumer group label used here (`order-processor`).
+# Once wired, the HPA controller polls that external metric on the interval
+# below and scales purely off real consumer lag — no CPU heuristics needed.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kafka-consumer
+  labels:
+    app: kafka-consumer
+    app.kubernetes.io/part-of: kafka-patterns
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kafka-consumer
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: kafka_consumergroup_group_lag
+          selector:
+            matchLabels:
+              # Must match the labels the metrics adapter attaches to the
+              # underlying Prometheus series for this consumer group/topic.
+              consumergroup: order-processor
+              topic: order-events
+        target:
+          # Scale out once average lag per replica crosses this — well
+          # below the 10_000 CRITICAL threshold in consumer_lag.py, so
+          # capacity is added before the partition is actually degraded.
+          type: AverageValue
+          averageValue: "5000"
+  behavior:
+    scaleUp:
+      # Lag spikes should be absorbed quickly — don't wait out a long
+      # stabilization window while the backlog grows.
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      # Scale down cautiously — a consumer group rebalance has a real cost
+      # (session timeout + partition reassignment), so avoid flapping.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

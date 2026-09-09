@@ -1,0 +1,74 @@
+# Deployment for the order-events ConsumerGroup pattern
+# (python/patterns/consumer.py — manual offset commit + DLQ routing).
+#
+# This is a demo manifest: swap `image` for a real built image and adjust
+# env vars / resource sizing for your workload before applying to a real
+# cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-consumer
+  labels:
+    app: kafka-consumer
+    app.kubernetes.io/part-of: kafka-patterns
+spec:
+  # Baseline replica count — the HorizontalPodAutoscaler (consumer-hpa.yaml)
+  # takes over scaling between minReplicas/maxReplicas based on consumer lag.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kafka-consumer
+  template:
+    metadata:
+      labels:
+        app: kafka-consumer
+      annotations:
+        # Prometheus scrape hints — pairs with the metrics port on the
+        # Service in consumer-service.yaml.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: kafka-consumer
+          image: kafka-patterns/consumer:latest
+          ports:
+            - name: metrics
+              containerPort: 8080
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-broker:9092"
+            - name: KAFKA_GROUP_ID
+              value: "order-processor"
+            - name: KAFKA_TOPICS
+              value: "order-events"
+            - name: KAFKA_DLQ_TOPIC
+              value: "order-events-dlq"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          # Liveness: process is alive and not deadlocked.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # Readiness: consumer group has joined and is actively polling —
+          # keep pods that are mid-rebalance out of traffic-affecting
+          # decisions (not relevant for produce/consume itself, but useful
+          # for rolling updates so the deployment waits for a healthy join).
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      # Give the consumer time to finish in-flight message processing and
+      # commit offsets before the pod is killed — avoids reprocessing storms
+      # on every rolling deploy.
+      terminationGracePeriodSeconds: 30

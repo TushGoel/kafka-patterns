@@ -189,6 +189,27 @@ Tests use OpenTelemetry's `InMemorySpanExporter` (see `python/tests/test_tracing
 
 ---
 
+### 6. Consumer Autoscaling on Kafka Lag (Kubernetes)
+
+| | |
+|---|---|
+| **Problem** | CPU-based autoscaling is the wrong signal for a Kafka consumer — a slow downstream dependency (e.g. a database write) causes lag to build while the consumer sits idle waiting on I/O, so CPU utilization stays flat even as the backlog grows unbounded. |
+| **Solution** | A `Deployment` + `HorizontalPodAutoscaler` in `k8s/` where the HPA scales on an **external metric** (`kafka_consumergroup_group_lag`) instead of CPU/memory — the same signal `python/patterns/consumer_lag.py` uses to classify partition health. The scale-out target (`averageValue: 5000`) sits below that pattern's `CRITICAL` threshold (lag ≥ 10,000) so capacity is added before a partition is actually degraded; scale-down is deliberately slower to avoid flapping through repeated consumer-group rebalances. |
+| **Impact** | Replica count tracks actual backlog instead of a proxy metric — the consumer group scales out under real load and scales back in once lag clears, without the manual toil of watching a lag dashboard and adjusting replicas by hand. |
+
+```
+k8s/
+├── consumer-deployment.yaml   # Deployment for the ConsumerGroup pattern; readiness/liveness probes, graceful shutdown
+├── consumer-service.yaml      # ClusterIP Service exposing a /metrics port for Prometheus scraping
+└── consumer-hpa.yaml          # HPA scaling on external metric kafka_consumergroup_group_lag
+```
+
+**Metrics-adapter wiring (not included — out of scope for a demo repo):** the Kubernetes External Metrics API doesn't know about Kafka on its own. A real cluster needs a lag exporter (e.g. `kafka-lag-exporter`) scraping committed offset vs. high watermark per consumer group, Prometheus scraping that exporter, and `prometheus-adapter` (or a KEDA `ScaledObject` as an alternative to a raw HPA) mapping the resulting series into `external.metrics.k8s.io`. `k8s/consumer-hpa.yaml` documents this chain inline as a comment next to the metric it expects.
+
+Validate manifests with `python3 -c "import yaml; yaml.safe_load(open(f))"` per file, or `kubectl apply --dry-run=client -f k8s/` if you have a cluster context configured.
+
+---
+
 ## Project Structure
 
 ```
@@ -216,6 +237,10 @@ kafka-patterns/
 │   └── consumer/
 │       ├── consumer.go
 │       └── consumer_test.go     # 5 tests
+├── k8s/
+│   ├── consumer-deployment.yaml # Deployment for the consumer pattern
+│   ├── consumer-service.yaml    # Service exposing /metrics for Prometheus
+│   └── consumer-hpa.yaml        # HPA scaling on Kafka consumer lag
 └── go.mod
 ```
 

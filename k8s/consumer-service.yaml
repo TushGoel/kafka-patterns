@@ -1,0 +1,23 @@
+# ClusterIP Service exposing the consumer's /metrics endpoint.
+#
+# The consumer itself has no inbound Kafka traffic to route (it pulls from
+# brokers), so this Service exists purely so Prometheus (or a
+# PodMonitor/ServiceMonitor if using the Prometheus Operator) has a stable
+# endpoint to scrape consumer-side metrics — e.g. messages processed,
+# DLQ-routed count, and per-partition lag as tracked conceptually by
+# python/patterns/consumer_lag.py.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-consumer
+  labels:
+    app: kafka-consumer
+    app.kubernetes.io/part-of: kafka-patterns
+spec:
+  selector:
+    app: kafka-consumer
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+  type: ClusterIP

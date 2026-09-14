@@ -8,7 +8,7 @@
 
 Production Kafka patterns in **Python and Go** — from reliable producer to LLM inference telemetry streaming and real-time anomaly detection.
 
-Built against patterns used in Confluent Cloud, WarpStream, and AI infrastructure platforms that stream millions of model invocation events daily.
+Patterns built for the failure modes real Kafka deployments hit in production — delivery guarantees, poison-pill isolation, rebalance-safe autoscaling, and cost-aware LLM provider routing.
 
 ---
 
@@ -264,7 +264,7 @@ kafka-patterns/
 │   └── tests/
 │       ├── test_producer.py     # 7 tests
 │       ├── test_consumer.py     # 7 tests
-│       ├── test_consumer_lag.py # 12 tests
+│       ├── test_consumer_lag.py # 8 tests
 │       ├── test_schema_registry.py # 9 tests
 │       ├── test_llm_inference.py   # 11 tests
 │       ├── test_tracing.py         # 7 tests — OpenTelemetry span assertions

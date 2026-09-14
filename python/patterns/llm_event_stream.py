@@ -2,10 +2,10 @@
 LLM inference event streaming.
 
 Every LLM call in production generates telemetry: model, provider, tokens,
-latency, cost, caller. At scale — millions of calls/day — this data must be
-streamed, not batch-loaded. Kafka is the backbone.
+latency, cost, caller. At scale, this data must be streamed, not
+batch-loaded. Kafka is the backbone.
 
-This pattern is used at companies running LLM infrastructure at scale:
+This pattern applies to any LLM infrastructure operating at scale:
   - Stream every model invocation for real-time cost tracking
   - Feed latency events to SLO monitors (p95 exceeded → page)
   - Replay events for debugging failed agent runs

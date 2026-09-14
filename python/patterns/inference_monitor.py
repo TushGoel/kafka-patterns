@@ -10,9 +10,9 @@ Consumes the llm-invocations Kafka topic and detects:
 This is the feedback loop that makes LLM gateways self-healing:
   stream event → detect anomaly → trigger rerouting or paging.
 
-At Netflix/Anthropic scale: millions of LLM calls/day, each generating
-a telemetry event. This consumer processes them in real-time so latency
-degradation triggers alerts in seconds, not the next daily report.
+At high volume, every LLM call generates a telemetry event. This consumer
+processes them in real-time so latency degradation triggers alerts in
+seconds, not the next daily report.
 """
 from __future__ import annotations
 

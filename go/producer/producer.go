@@ -1,5 +1,5 @@
 // Package producer implements reliable Kafka producer patterns in Go.
-// Uses the confluent-kafka-go client — the same client used by Confluent Cloud.
+// This is an in-memory simulation of the pattern. Production: replace with confluent-kafka-go.
 package producer
 
 import (

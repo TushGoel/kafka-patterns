@@ -7,7 +7,7 @@ Production concern: lag > threshold means consumers can't keep up with
 producers — a leading indicator of processing pipeline degradation before
 it becomes a customer-visible incident.
 
-At Confluent/WarpStream scale: monitor lag per consumer group, per partition.
+At scale: monitor lag per consumer group, per partition.
 Alert when lag exceeds SLO thresholds. Correlate with processing latency.
 """
 from __future__ import annotations

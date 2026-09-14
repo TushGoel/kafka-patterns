@@ -8,7 +8,7 @@ process-write atomic commit) give true exactly-once across producer + consumer.
 When to use: financial transactions, inventory updates, any case where
 duplicate processing causes real-world harm.
 
-Cost: 20-30% throughput reduction vs at-least-once. Use only when needed.
+Cost: meaningfully lower throughput than at-least-once. Use only when needed.
 """
 from __future__ import annotations
 

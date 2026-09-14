@@ -10,7 +10,7 @@ Schema evolution rules (Confluent defaults):
   FORWARD:  old schema can read new messages (remove fields)
   FULL:     both backward + forward compatible
 
-Why this matters at Confluent/WarpStream:
+Why this matters at scale:
   Without schema governance, a producer change can break all downstream
   consumers — no coordination needed. With Schema Registry, breaking
   changes are rejected at produce time, not discovered at consume time.

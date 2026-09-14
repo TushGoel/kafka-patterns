@@ -155,7 +155,7 @@ count = processor.process_batch(messages)
 # Output messages are invisible until transaction commits — no partial writes
 ```
 
-**When to use:** Payment processing, inventory updates, anything where duplicate processing causes real-world harm. Cost: ~25% throughput reduction. Use only when idempotent consumers aren't possible.
+**When to use:** Payment processing, inventory updates, anything where duplicate processing causes real-world harm. Cost: meaningfully lower throughput than at-least-once. Use only when idempotent consumers aren't possible.
 
 ---
 
@@ -204,7 +204,7 @@ k8s/
 └── consumer-hpa.yaml          # HPA scaling on external metric kafka_consumergroup_group_lag
 ```
 
-**Metrics-adapter wiring (not included — out of scope for a demo repo):** the Kubernetes External Metrics API doesn't know about Kafka on its own. A real cluster needs a lag exporter (e.g. `kafka-lag-exporter`) scraping committed offset vs. high watermark per consumer group, Prometheus scraping that exporter, and `prometheus-adapter` (or a KEDA `ScaledObject` as an alternative to a raw HPA) mapping the resulting series into `external.metrics.k8s.io`. `k8s/consumer-hpa.yaml` documents this chain inline as a comment next to the metric it expects.
+**Metrics-adapter wiring (not included — out of scope for a demo repo):** the Kubernetes External Metrics API doesn't know about Kafka on its own. A real cluster needs a lag exporter (e.g. `kafka-lag-exporter`) scraping committed offset vs. high watermark per consumer group, Prometheus scraping that exporter, and `prometheus-adapter` (or a KEDA `ScaledObject` as an alternative to a raw HPA) mapping the resulting series into `external.metrics.k8s.io`. `k8s/consumer-hpa.yaml` documents this chain inline as a comment next to the metric it expects. Same scope note applies to `k8s/consumer-deployment.yaml`'s `/healthz`/`/ready` probes and `consumer-service.yaml`'s `/metrics` port — the manifests declare them, but neither `consumer.py` nor `consumer.go` runs an HTTP server; wiring a real health/metrics endpoint is part of the same integration work.
 
 Validate manifests with `python3 -c "import yaml; yaml.safe_load(open(f))"` per file, or `kubectl apply --dry-run=client -f k8s/` if you have a cluster context configured.
 
@@ -304,8 +304,12 @@ Each transactional producer instance must have a unique transactional ID. Reusin
 ## Running Tests
 
 ```bash
-pip install pytest
+pip install pytest opentelemetry-api opentelemetry-sdk
 pytest python/tests/ -v
+```
+
+```bash
+cd go && go test ./... -v
 ```
 
 ---
